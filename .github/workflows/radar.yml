@@ -2,7 +2,7 @@ name: Ticket Radar
 
 on:
   schedule:
-    - cron: '0 17 * * *'
+  - cron: '15 3,15,21 * * *'
   workflow_dispatch: {}
 
 permissions:
