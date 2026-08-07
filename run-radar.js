@@ -43,24 +43,40 @@ async function fetchSearch(qs) {
 }
 
 async function sendTelegram(text) {
-  if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT_ID) return;
+  if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT_ID) { console.log('TG: faltan secrets'); return; }
   try {
-    await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text }),
     });
-  } catch { /* no tumbes la corrida por un fallo de envío */ }
+    console.log(`TG status ${res.status}`);
+  } catch (e) { console.log('TG error:', e.message); }
 }
 
 async function sendWhatsApp(text) {
-  if (!CALLMEBOT_PHONE || !CALLMEBOT_APIKEY) return;
+  if (!CALLMEBOT_PHONE || !CALLMEBOT_APIKEY) { console.log('WA: faltan secrets'); return; }
   const url = 'https://api.callmebot.com/whatsapp.php?' +
     new URLSearchParams({ phone: CALLMEBOT_PHONE, text, apikey: CALLMEBOT_APIKEY }).toString();
-  try { await fetch(url); } catch { /* idem */ }
+  try {
+    const res = await fetch(url);
+    const body = (await res.text()).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    console.log(`WA status ${res.status}: ${body.slice(0, 220)}`);
+  } catch (e) { console.log('WA error:', e.message); }
 }
 
 async function main() {
+  // Modo prueba: manda un mensaje a los 2 canales y muestra la respuesta, para
+  // diagnosticar si Telegram/WhatsApp entregan desde GitHub. Se activa con el
+  // input "test_notify" del workflow.
+  if (process.env.TEST_NOTIFY === 'true' || process.env.TEST_NOTIFY === '1') {
+    console.log('== PRUEBA DE NOTIFICACIÓN ==');
+    await sendTelegram('✅ Prueba Ticket Radar (Telegram) desde GitHub');
+    await sendWhatsApp('✅ Prueba Ticket Radar (WhatsApp) desde GitHub');
+    console.log('Prueba enviada. Revisa Telegram y WhatsApp, y lee el status de arriba.');
+    return;
+  }
+
   const firstRun = !fs.existsSync(SNAPSHOT);
   let staticData = {};
   if (!firstRun) {
