@@ -4,7 +4,7 @@
  * Hace lo mismo que hacía el workflow de n8n, pero en un solo script:
  *   1. Busca en la Ticketmaster Discovery API (todas las fuentes).
  *   2. Corre el motor (radar.js) para detectar alertas.
- *   3. Manda cada alerta a Telegram y a WhatsApp (CallMeBot).
+ *   3. Manda cada alerta a Telegram.
  *   4. Guarda el snapshot en snapshot.json (GitHub Actions lo commitea para que
  *      la próxima corrida solo avise lo NUEVO).
  *
@@ -14,7 +14,7 @@
  *
  * Env vars (secrets en GitHub):
  *   TICKETMASTER_API_KEY, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
- *   CALLMEBOT_PHONE, CALLMEBOT_APIKEY
+ *   (WhatsApp se quitó: CallMeBot no entrega desde servidores. Solo Telegram.)
  */
 
 const fs = require('fs');
@@ -22,8 +22,7 @@ const path = require('path');
 const radar = require('./radar.js');
 
 const {
-  TICKETMASTER_API_KEY, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
-  CALLMEBOT_PHONE, CALLMEBOT_APIKEY, DRY_RUN,
+  TICKETMASTER_API_KEY, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, DRY_RUN,
 } = process.env;
 
 const SNAPSHOT = path.join(__dirname, 'snapshot.json');
@@ -54,26 +53,12 @@ async function sendTelegram(text) {
   } catch (e) { console.log('TG error:', e.message); }
 }
 
-async function sendWhatsApp(text) {
-  if (!CALLMEBOT_PHONE || !CALLMEBOT_APIKEY) { console.log('WA: faltan secrets'); return; }
-  const url = 'https://api.callmebot.com/whatsapp.php?' +
-    new URLSearchParams({ phone: CALLMEBOT_PHONE, text, apikey: CALLMEBOT_APIKEY }).toString();
-  try {
-    const res = await fetch(url);
-    const body = (await res.text()).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    console.log(`WA status ${res.status}: ${body.slice(0, 220)}`);
-  } catch (e) { console.log('WA error:', e.message); }
-}
-
 async function main() {
-  // Modo prueba: manda un mensaje a los 2 canales y muestra la respuesta, para
-  // diagnosticar si Telegram/WhatsApp entregan desde GitHub. Se activa con el
-  // input "test_notify" del workflow.
+  // Modo prueba: manda un mensaje a Telegram para confirmar que entrega.
   if (process.env.TEST_NOTIFY === 'true' || process.env.TEST_NOTIFY === '1') {
     console.log('== PRUEBA DE NOTIFICACIÓN ==');
-    await sendTelegram('✅ Prueba Ticket Radar (Telegram) desde GitHub');
-    await sendWhatsApp('✅ Prueba Ticket Radar (WhatsApp) desde GitHub');
-    console.log('Prueba enviada. Revisa Telegram y WhatsApp, y lee el status de arriba.');
+    await sendTelegram('✅ Prueba Ticket Radar desde GitHub');
+    console.log('Prueba enviada. Revisa Telegram.');
     return;
   }
 
@@ -114,8 +99,7 @@ async function main() {
     console.log(`📨 ${alerts.length} alertas para enviar`);
     for (const a of alerts) {
       await sendTelegram(a.json.text);
-      await sendWhatsApp(a.json.text);
-      await sleep(4000); // respeta el rate limit de CallMeBot
+      await sleep(600); // margen para el rate limit de Telegram
     }
   }
 

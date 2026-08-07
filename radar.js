@@ -558,14 +558,33 @@ function detect(rawEvents, seen, now) {
       seen[key] = { fp: 'wish', notified: notifiedPrev };
       const wins = allFutureWindows(group, now);
       for (const w of wins) {
+        // 1) Aviso inicial: la primera vez que vemos esta ventana.
         const nkey = `wish:${w.label}:${w.at}`;
-        if (notifiedPrev[nkey]) continue;
-        notifiedPrev[nkey] = true;
-        alerts.push({
-          kind: 'WISHLIST', wishlist: true, saleState: 'upcoming', nearest: w, agg,
-          score: 999, reasons: ['show en tu wishlist'],
-          priority: w.h <= 2 ? 0 : w.h <= 48 ? 1 : 2,
-        });
+        const firstTime = !notifiedPrev[nkey];
+        if (firstTime) {
+          notifiedPrev[nkey] = true;
+          alerts.push({
+            kind: 'WISHLIST', wishlist: true, saleState: 'upcoming', nearest: w, agg,
+            score: 999, reasons: ['show en tu wishlist'],
+            priority: w.h <= 2 ? 0 : w.h <= 48 ? 1 : 2,
+          });
+        }
+        // 2) Recordatorios (una vez cada uno) para que no se te olvide:
+        //    ≤24 h antes y ≤2 h (última llamada).
+        const tiers = [
+          { key: `r2:${w.at}`, max: 2, min: -0.01, priority: 0 },
+          { key: `r24:${w.at}`, max: 24, min: 2, priority: 1 },
+        ];
+        for (const t of tiers) {
+          if (w.h > t.max || w.h <= t.min || notifiedPrev[t.key]) continue;
+          notifiedPrev[t.key] = true;
+          if (firstTime) continue; // el aviso inicial de esta corrida ya trae el timing
+          alerts.push({
+            kind: 'RECORDATORIO', wishlist: true, saleState: 'upcoming', nearest: w, agg,
+            score: 999, reasons: ['recordatorio de tu wishlist'],
+            priority: t.priority,
+          });
+        }
       }
       continue;
     }
@@ -1027,7 +1046,28 @@ if (typeof require !== 'undefined' && require.main === module && process.argv.in
     sales: { public: { startDateTime: FUT }, presales: [] } }], sd, NOW);
   check('New Mexico United → NO se cuela', out.length === 0);
 
-  console.log('\n22) Basura → no revienta');
+  console.log('\n22) Wishlist: recordatorio a ≤24 h para no olvidar (aparte del aviso inicial)');
+  sd = {};
+  const sale = '2026-08-15T15:00:00Z';
+  const im = () => [{ id: 'imcf', name: 'Inter Miami CF vs Cruz Azul', url: 'u',
+    dates: { start: { localDate: '2026-09-16' } },
+    _embedded: { venues: [{ name: 'Nu Stadium', city: { name: 'Miami' }, country: { countryCode: 'US' } }], attractions: [{ name: 'Inter Miami CF' }] },
+    classifications: [{ segment: { name: 'Sports' }, genre: { name: 'Soccer' } }],
+    sales: { public: { startDateTime: sale }, presales: [] } }];
+  // Descubierto con la venta a ~10 días → aviso inicial WISHLIST.
+  out = run(im(), sd, Date.parse('2026-08-05T15:00:00Z'));
+  check('aviso inicial (WISHLIST)', out.some((o) => o.json.kind === 'WISHLIST'));
+  // Ya a ~20 h → llega RECORDATORIO.
+  out = run(im(), sd, Date.parse('2026-08-14T19:00:00Z'));
+  check('recordatorio ≤24 h', out.some((o) => /RECORDATORIO/.test(o.json.text)));
+  // Otra corrida igual → no repite.
+  out = run(im(), sd, Date.parse('2026-08-14T20:00:00Z'));
+  check('no repite el de 24 h', out.length === 0);
+  // A ~1 h → última llamada.
+  out = run(im(), sd, Date.parse('2026-08-15T14:00:00Z'));
+  check('última llamada ≤2 h', out.some((o) => /ÚLTIMA LLAMADA/.test(o.json.text)));
+
+  console.log('\n23) Basura → no revienta');
   out = run([{ id: 'x' }, {}, null], {}, NOW);
   check('sobrevive', Array.isArray(out));
 
