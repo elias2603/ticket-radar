@@ -68,6 +68,7 @@ const MUSIC = [
   { kw: 'System of a Down', cc: ['MX', 'US'] },
   { kw: "Guns N' Roses", cc: ['MX', 'US'] },
   { kw: 'Linkin Park', cc: ['MX', 'US'] },
+  { kw: 'My Chemical Romance', cc: ['MX', 'US'] },
   // Pop global
   { kw: 'Lady Gaga', cc: ['US', 'MX'] },
   { kw: 'Ariana Grande', cc: ['US', 'MX'] },
@@ -135,7 +136,8 @@ const SPORTS = [
   { kw: 'Pumas UNAM', m: 'pumas', cc: ['MX'] },
   { kw: 'Rayados Monterrey', m: 'rayados', cc: ['MX'] },
   { kw: 'Tigres UANL', m: 'tigres', cc: ['MX'] },
-  { kw: 'Seleccion Mexicana', m: 'mexico national', cc: ['MX', 'US'] },
+  { kw: 'Seleccion Mexicana', m: 'seleccion mexicana', cc: ['MX'] },
+  { kw: 'Mexico National Team', m: 'mexico national', cc: ['US'] },
   { kw: 'Canelo Alvarez', m: 'canelo', cc: ['MX', 'US'] },
   // Estados Unidos
   { kw: 'Dallas Cowboys', m: 'cowboys', cc: ['US'] },
@@ -163,8 +165,10 @@ const SPORTS = [
   { kw: 'WrestleMania', m: 'wrestlemania', cc: ['US'] },
   { kw: 'Triplemania', m: 'triplemania', cc: ['MX'] },
   { kw: 'US Open Tennis', m: 'us open', cc: ['US'] },
-  // Inter Miami (Messi): se agota SIN importar rival → ver SOLO_MARQUEE abajo.
-  { kw: 'Inter Miami', m: 'inter miami', cc: ['US', 'MX'] },
+  // Efecto estrella: se agotan SIN importar rival → ver SOLO_MARQUEE abajo.
+  { kw: 'Inter Miami', m: 'inter miami', cc: ['US', 'MX'] },   // Messi
+  { kw: 'Orlando City', m: 'orlando city', cc: ['US', 'MX'] }, // Griezmann
+  { kw: 'LAFC', m: 'lafc', cc: ['US', 'MX'] },                 // Son Heung-min
 ];
 
 /**
@@ -244,7 +248,7 @@ const SINGLE_EVENT_GENRES = new Set(['boxing', 'mixed martial arts', 'motorsport
  * Equipos que se agotan SOLOS, sin importar el rival (efecto Messi). Para estos,
  * 1 token ya califica aunque el otro equipo no sea marquee — casa y visita.
  */
-const SOLO_MARQUEE = ['inter miami'];
+const SOLO_MARQUEE = ['inter miami', 'orlando city', 'lafc', 'seleccion mexicana', 'mexico national'];
 
 /** ¿El token aparece como palabra completa en el texto normalizado? */
 function tokenIn(hayNorm, tok) {
@@ -1005,7 +1009,25 @@ if (typeof require !== 'undefined' && require.main === module && process.argv.in
     sales: { public: { startDateTime: FUT }, presales: [] } }], sd, NOW);
   check('2 equipos chicos → NO alerta', out.length === 0);
 
-  console.log('\n21) Basura → no revienta');
+  console.log('\n21) Selección Mexicana: se agota sin importar rival (solo-marquee)');
+  sd = {};
+  const seleccion = [{ id: 'sel', name: 'Mexico National Team vs Honduras', url: 'u',
+    dates: { start: { localDate: '2026-10-10' } },
+    _embedded: { venues: [{ name: 'Estadio Banorte', city: { name: 'x' }, country: { countryCode: 'US' } }], attractions: [{ name: 'Mexico National Team' }] },
+    classifications: [{ segment: { name: 'Sports' }, genre: { name: 'Soccer' } }],
+    sales: { public: { startDateTime: FUT }, presales: [] } }];
+  out = run(seleccion, sd, NOW);
+  check('México vs rival chico → SÍ alerta', out.length === 1);
+  // Control: "New Mexico United" (equipo real de USL) NO debe colarse.
+  sd = {};
+  out = run([{ id: 'nm', name: 'New Mexico United vs Phoenix', url: 'u',
+    dates: { start: { localDate: '2026-10-10' } },
+    _embedded: { venues: [{ name: 'Field', city: { name: 'x' }, country: { countryCode: 'US' } }], attractions: [{ name: 'New Mexico United' }] },
+    classifications: [{ segment: { name: 'Sports' }, genre: { name: 'Soccer' } }],
+    sales: { public: { startDateTime: FUT }, presales: [] } }], sd, NOW);
+  check('New Mexico United → NO se cuela', out.length === 0);
+
+  console.log('\n22) Basura → no revienta');
   out = run([{ id: 'x' }, {}, null], {}, NOW);
   check('sobrevive', Array.isArray(out));
 
