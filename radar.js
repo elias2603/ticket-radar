@@ -97,6 +97,28 @@ const MUSIC = [
   // Festivales (match best-effort por nombre; afinar si no cae)
   { kw: 'Corona Capital', cc: ['MX'] },
   { kw: 'EDC Mexico', cc: ['MX'] },
+  // Reggaetón / regional que faltaban
+  { kw: 'J Balvin', cc: ['MX', 'US'] },
+  { kw: 'Maluma', cc: ['MX', 'US'] },
+  { kw: 'Natanael Cano', cc: ['MX', 'US'] },
+  { kw: 'Mana', cc: ['MX', 'US'] },
+  // Comedia (Ticketmaster los lista como Arts & Theatre; el radar los reconoce por nombre)
+  { kw: 'Franco Escamilla', cc: ['MX', 'US'] },
+  { kw: 'Hablando Huevadas', cc: ['US', 'MX'] },
+  { kw: 'Gabriel Iglesias', cc: ['US', 'MX'] },
+  // Batch sold-out confiable (agosto 2026)
+  { kw: 'Travis Scott', cc: ['US', 'MX'] },
+  { kw: 'Justin Bieber', cc: ['US', 'MX'] },
+  { kw: 'Twenty One Pilots', cc: ['US', 'MX'] },
+  { kw: 'Imagine Dragons', cc: ['US', 'MX'] },
+  { kw: 'ITZY', cc: ['US', 'MX'] },
+  { kw: 'Los Angeles Azules', cc: ['MX', 'US'] },
+  { kw: 'Ivan Cornejo', cc: ['MX', 'US'] },
+  { kw: 'Gabito Ballesteros', cc: ['MX', 'US'] },
+  { kw: 'Anuel AA', cc: ['MX', 'US'] },
+  { kw: 'Ozuna', cc: ['MX', 'US'] },
+  { kw: 'Alejandro Fernandez', cc: ['MX', 'US'] },
+  { kw: 'Marco Antonio Solis', cc: ['MX', 'US'] },
 ];
 
 /**
@@ -125,6 +147,8 @@ const SPORTS = [
   { kw: 'Golden State Warriors', m: 'warriors', cc: ['US'] },
   { kw: 'Boston Celtics', m: 'celtics', cc: ['US'] },
   { kw: 'New York Knicks', m: 'knicks', cc: ['US'] },
+  { kw: 'Oklahoma City Thunder', m: 'thunder', cc: ['US'] },
+  { kw: 'Denver Nuggets', m: 'nuggets', cc: ['US'] },
   { kw: 'New York Yankees', m: 'yankees', cc: ['US'] },
   { kw: 'Los Angeles Dodgers', m: 'dodgers', cc: ['US'] },
   { kw: 'Green Bay Packers', m: 'packers', cc: ['US'] },
@@ -138,6 +162,9 @@ const SPORTS = [
   { kw: 'Formula 1', m: 'formula 1', cc: ['MX', 'US'] },
   { kw: 'WrestleMania', m: 'wrestlemania', cc: ['US'] },
   { kw: 'Triplemania', m: 'triplemania', cc: ['MX'] },
+  { kw: 'US Open Tennis', m: 'us open', cc: ['US'] },
+  // Inter Miami (Messi): se agota SIN importar rival → ver SOLO_MARQUEE abajo.
+  { kw: 'Inter Miami', m: 'inter miami', cc: ['US', 'MX'] },
 ];
 
 /**
@@ -204,14 +231,20 @@ function isPreseason(ev) {
  */
 const SPORTS_GENRES = new Set([
   'soccer', 'football', 'basketball', 'baseball', 'hockey',
-  'boxing', 'mixed martial arts', 'motorsports racing', 'racing', 'wrestling',
+  'boxing', 'mixed martial arts', 'motorsports racing', 'racing', 'wrestling', 'tennis',
 ]);
 
 /**
  * Géneros de EVENTO INDIVIDUAL: box, MMA, F1, lucha. Aquí 1 token marquee ya
  * califica (no necesitan "2 equipos" ni playoff, no aplica).
  */
-const SINGLE_EVENT_GENRES = new Set(['boxing', 'mixed martial arts', 'motorsports racing', 'racing', 'wrestling']);
+const SINGLE_EVENT_GENRES = new Set(['boxing', 'mixed martial arts', 'motorsports racing', 'racing', 'wrestling', 'tennis']);
+
+/**
+ * Equipos que se agotan SOLOS, sin importar el rival (efecto Messi). Para estos,
+ * 1 token ya califica aunque el otro equipo no sea marquee — casa y visita.
+ */
+const SOLO_MARQUEE = ['inter miami'];
 
 /** ¿El token aparece como palabra completa en el texto normalizado? */
 function tokenIn(hayNorm, tok) {
@@ -371,7 +404,11 @@ function sportsQualifies(ev) {
 
   const { marqueeCount, bigStage } = sportsSignals(ev);
   if (SINGLE_EVENT_GENRES.has(genre)) return marqueeCount >= 1;
-  return bigStage || marqueeCount >= 2;
+  // Temporada regular: playoff/final, choque de 2 grandes, o un equipo que se
+  // agota solo (Messi). Un partido normal de 1 solo equipo grande no basta.
+  const hay = norm(`${ev.artist} ${ev.name}`);
+  const solo = SOLO_MARQUEE.some((t) => tokenIn(hay, t));
+  return bigStage || marqueeCount >= 2 || solo;
 }
 
 function scoreSports(ev) {
@@ -949,7 +986,26 @@ if (typeof require !== 'undefined' && require.main === module && process.argv.in
   out = run(game('Golden State Warriors vs Los Angeles Lakers', 'Chase Center', FUT, 'US', 'gsw-reg'), sd, NOW);
   check('el mismo choque (sin pretemporada) SÍ alerta', out.length === 1);
 
-  console.log('\n20) Basura → no revienta');
+  console.log('\n20) Inter Miami (efecto Messi): califica aunque el rival sea chico');
+  sd = {};
+  // Visita: rival chico vs Inter Miami. Solo 1 marquee, pero SOLO_MARQUEE → califica.
+  const messi = [{ id: 'im', name: 'Nashville SC vs Inter Miami CF', url: 'u',
+    dates: { start: { localDate: '2026-09-01' } },
+    _embedded: { venues: [{ name: 'Geodis Park', city: { name: 'Nashville' }, country: { countryCode: 'US' } }], attractions: [{ name: 'Inter Miami CF' }] },
+    classifications: [{ segment: { name: 'Sports' }, genre: { name: 'Soccer' } }],
+    sales: { public: { startDateTime: FUT }, presales: [] } }];
+  out = run(messi, sd, NOW);
+  check('Inter Miami vs equipo chico → SÍ alerta', out.length === 1);
+  // Control: dos equipos chicos de MLS → NO alerta.
+  sd = {};
+  out = run([{ id: 'x2', name: 'Nashville SC vs Austin FC', url: 'u',
+    dates: { start: { localDate: '2026-09-01' } },
+    _embedded: { venues: [{ name: 'Geodis Park', city: { name: 'x' }, country: { countryCode: 'US' } }], attractions: [{ name: 'Nashville SC' }] },
+    classifications: [{ segment: { name: 'Sports' }, genre: { name: 'Soccer' } }],
+    sales: { public: { startDateTime: FUT }, presales: [] } }], sd, NOW);
+  check('2 equipos chicos → NO alerta', out.length === 0);
+
+  console.log('\n21) Basura → no revienta');
   out = run([{ id: 'x' }, {}, null], {}, NOW);
   check('sobrevive', Array.isArray(out));
 
@@ -977,5 +1033,5 @@ function buildSearches() {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { normalize, score, detect, formatAlert, waParams, run, buildSearches, MUSIC, SPORTS, WISHLIST_SPORTS_SEARCH };
+  module.exports = { normalize, score, detect, formatAlert, waParams, run, buildSearches, isWishlist, MUSIC, SPORTS, WISHLIST_SPORTS_SEARCH };
 }
