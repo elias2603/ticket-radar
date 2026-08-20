@@ -143,8 +143,11 @@ const SPORTS = [
   { kw: 'Dallas Cowboys', m: 'cowboys', cc: ['US'] },
   { kw: 'Kansas City Chiefs', m: 'chiefs', cc: ['US'] },
   { kw: 'Philadelphia Eagles', m: 'eagles', cc: ['US'] },
-  { kw: 'San Francisco 49ers', m: '49ers', cc: ['US'] },
+  { kw: 'San Francisco 49ers', m: '49ers', cc: ['US', 'MX'] },
+  { kw: 'Minnesota Vikings', m: 'vikings', cc: ['US', 'MX'] },
   { kw: 'Buffalo Bills', m: 'bills', cc: ['US'] },
+  { kw: 'NFL Mexico', m: 'nfl', cc: ['MX'] },
+  { kw: 'NBA Mexico', m: 'nba', cc: ['MX'] },
   { kw: 'Los Angeles Lakers', m: 'lakers', cc: ['US'] },
   { kw: 'Golden State Warriors', m: 'warriors', cc: ['US'] },
   { kw: 'Boston Celtics', m: 'celtics', cc: ['US'] },
@@ -407,10 +410,20 @@ function sportsQualifies(ev) {
   if (!SPORTS_GENRES.has(genre)) return false;
 
   const { marqueeCount, bigStage } = sportsSignals(ev);
+  const hay = norm(`${ev.artist} ${ev.name}`);
+
+  // Ligas de EU en México (NFL/NBA): eventos internacionales raros, se agotan.
+  if (ev.country === 'MX') {
+    // Football americano en MX = solo NFL (el soccer mexicano es genre "Soccer").
+    if (genre === 'football') return true;
+    // Basket en MX: exige "NBA" o un equipo grande, para no confundir con liga
+    // mexicana (LNBP).
+    if (genre === 'basketball' && (tokenIn(hay, 'nba') || marqueeCount >= 1)) return true;
+  }
+
   if (SINGLE_EVENT_GENRES.has(genre)) return marqueeCount >= 1;
   // Temporada regular: playoff/final, choque de 2 grandes, o un equipo que se
   // agota solo (Messi). Un partido normal de 1 solo equipo grande no basta.
-  const hay = norm(`${ev.artist} ${ev.name}`);
   const solo = SOLO_MARQUEE.some((t) => tokenIn(hay, t));
   return bigStage || marqueeCount >= 2 || solo;
 }
@@ -524,7 +537,10 @@ function detect(rawEvents, seen, now) {
   // goteos); música normal por artista (una tour = una alerta).
   const groups = {};
   for (const ev of events) {
-    const key = (isSports(ev) || isWishlist(ev)) ? `evt|${ev.id}` : `music|${String(ev.artist).toLowerCase().trim()}`;
+    // Deportes: por evento (cada juego es su venta). Música (wishlist o normal):
+    // por ARTISTA → una gira = un grupo (y la wishlist deduplica ventanas para
+    // no mandar 70 avisos de una gira de 10 ciudades con la misma fecha de venta).
+    const key = isSports(ev) ? `evt|${ev.id}` : `music|${String(ev.artist).toLowerCase().trim()}`;
     (groups[key] = groups[key] || []).push(ev);
   }
 
@@ -556,8 +572,17 @@ function detect(rawEvents, seen, now) {
     // una vez cada una. Aquí un goteo sobre un show agotado SÍ importa.
     if (isWishlist(rep)) {
       seen[key] = { fp: 'wish', notified: notifiedPrev };
-      const wins = allFutureWindows(group, now);
+      // Deduplica ventanas por (etiqueta + hora): una gira de 10 ciudades con la
+      // misma fecha de venta = 1 aviso ("10 fechas"), no 10.
+      const byWin = new Map();
+      for (const w of allFutureWindows(group, now)) {
+        const wk = `${w.label}|${w.at}`;
+        if (!byWin.has(wk)) byWin.set(wk, { ...w, count: 0 });
+        byWin.get(wk).count += 1;
+      }
+      const wins = [...byWin.values()].sort((a, b) => a.h - b.h);
       for (const w of wins) {
+        const nFechas = w.count > 1 ? ` · ${w.count} fechas` : '';
         // 1) Aviso inicial: la primera vez que vemos esta ventana.
         const nkey = `wish:${w.label}:${w.at}`;
         const firstTime = !notifiedPrev[nkey];
@@ -565,7 +590,7 @@ function detect(rawEvents, seen, now) {
           notifiedPrev[nkey] = true;
           alerts.push({
             kind: 'WISHLIST', wishlist: true, saleState: 'upcoming', nearest: w, agg,
-            score: 999, reasons: ['show en tu wishlist'],
+            score: 999, reasons: [`show en tu wishlist${nFechas}`],
             priority: w.h <= 2 ? 0 : w.h <= 48 ? 1 : 2,
           });
         }
@@ -581,7 +606,7 @@ function detect(rawEvents, seen, now) {
           if (firstTime) continue; // el aviso inicial de esta corrida ya trae el timing
           alerts.push({
             kind: 'RECORDATORIO', wishlist: true, saleState: 'upcoming', nearest: w, agg,
-            score: 999, reasons: ['recordatorio de tu wishlist'],
+            score: 999, reasons: [`recordatorio de tu wishlist${nFechas}`],
             priority: t.priority,
           });
         }
@@ -683,7 +708,9 @@ function formatAlert(a) {
   const icon = String(g.segment).toLowerCase() === 'sports' ? '🏟️' : '🎵';
 
   lines.push(headerFor(a));
-  lines.push(a.kind === 'WISHLIST' ? `${icon} *${g.artist}* ${flag}` : `${icon} *${g.artist}* ${flag} — score ${a.score}`);
+  // Los avisos de wishlist (WISHLIST y sus RECORDATORIOs) NO muestran score:
+  // el 999 es un marcador interno, no un dato para el usuario.
+  lines.push(a.wishlist ? `${icon} *${g.artist}* ${flag}` : `${icon} *${g.artist}* ${flag} — score ${a.score}`);
 
   const venue = g.venues[0] + (g.venues.length > 1 ? ` (+${g.venues.length - 1} recinto/s)` : '');
   lines.push(`📍 ${venue}${g.city ? `, ${g.city}` : ''}`);
@@ -725,7 +752,7 @@ function waParams(a) {
 
   const fechas = g.dateCount > 1 ? `${g.dateCount} fechas ${g.firstDate}–${g.lastDate}` : (g.firstDate ?? '?');
   const venta = a.nearest ? `${a.nearest.label} ${humanizeLead(a.nearest.h)}` : 'sin fecha de venta';
-  const detalle = a.kind === 'WISHLIST' ? fechas : `${fechas} · score ${a.score}`;
+  const detalle = a.wishlist ? fechas : `${fechas} · score ${a.score}`;
 
   return [
     oneLine(tipo),                                                     // {{1}}
@@ -811,17 +838,18 @@ if (typeof require !== 'undefined' && require.main === module && process.argv.in
   out = run(music('Artista Y', 'Estadio GNP Seguros', 'Pop', FUT, 1), sd, NOW);
   check('1 fecha de pop (score 60) → no alerta', out.length === 0);
 
-  console.log('\n2) Artista de la lista → modo WISHLIST (1 alerta por fecha, caza goteos)');
+  console.log('\n2) Artista de la lista → WISHLIST (gira agrupada: 1 aviso con las fechas)');
   sd = {};
   out = run(music('Shakira', 'Estadio GNP Seguros', 'Latin', FUT, 3, 'MX'), sd, NOW);
-  check('3 alertas (una por fecha, no agrupadas)', out.length === 3);
-  check('todas kind WISHLIST', out.every((o) => o.json.kind === 'WISHLIST'));
+  check('1 alerta (3 fechas, misma venta → deduplicada)', out.length === 1);
+  check('kind WISHLIST', out[0]?.json.kind === 'WISHLIST');
+  check('el texto dice "3 fechas"', /3 fechas/.test(out[0]?.json.text ?? ''));
   check('marcado como música', out[0]?.json.segment === 'Music');
 
   console.log('\n3) Artista de EU en la lista → bandera US');
   sd = {};
   out = run(music('Billie Eilish', 'SoFi Stadium', 'Pop', FUT, 2, 'US'), sd, NOW);
-  check('2 alertas (2 fechas)', out.length === 2);
+  check('1 alerta (2 fechas agrupadas)', out.length === 1);
   check('país US', out[0]?.json.country === 'US');
   check('texto trae 🇺🇸', /🇺🇸/.test(out[0]?.json.text ?? ''));
 
@@ -897,7 +925,7 @@ if (typeof require !== 'undefined' && require.main === module && process.argv.in
   // (c) Drake sí (match exacto) → wishlist, 1 por fecha.
   sd = {};
   out = run(music('Drake', 'SoFi Stadium', 'Hip-Hop/Rap', FUT, 2, 'US'), sd, NOW);
-  check('(c) Drake (exacto) → 2 alertas (2 fechas)', out.length === 2);
+  check('(c) Drake (exacto) → sí alerta (agrupado)', out.length === 1);
   // (d) Voleibol femenil de México → excluido por tipo de deporte.
   sd = {};
   const volley = [{ id: 'v1', name: 'Mexico Women National Volleyball', url: 'u',
@@ -1067,7 +1095,50 @@ if (typeof require !== 'undefined' && require.main === module && process.argv.in
   out = run(im(), sd, Date.parse('2026-08-15T14:00:00Z'));
   check('última llamada ≤2 h', out.some((o) => /ÚLTIMA LLAMADA/.test(o.json.text)));
 
-  console.log('\n23) Basura → no revienta');
+  console.log('\n22b) NFL en México (49ers vs Vikings en Azteca) → SÍ alerta');
+  sd = {};
+  const nfl = [{ id: 'nflmx', name: 'San Francisco 49ers vs Minnesota Vikings', url: 'u',
+    dates: { start: { localDate: '2026-11-15' } },
+    _embedded: { venues: [{ name: 'Estadio Banorte', city: { name: 'CDMX' }, country: { countryCode: 'MX' } }], attractions: [{ name: 'San Francisco 49ers' }] },
+    classifications: [{ segment: { name: 'Sports' }, genre: { name: 'Football' } }],
+    sales: { public: { startDateTime: FUT }, presales: [] } }];
+  check('NFL en México → alerta', run(nfl, sd, NOW).length === 1);
+  // Control: NFL en EU con 1 solo equipo grande NO alerta (temporada regular).
+  sd = {};
+  const nflUs = [{ id: 'nflus', name: 'San Francisco 49ers vs Arizona Cardinals', url: 'u',
+    dates: { start: { localDate: '2026-11-15' } },
+    _embedded: { venues: [{ name: 'Levi Stadium', city: { name: 'x' }, country: { countryCode: 'US' } }], attractions: [{ name: 'San Francisco 49ers' }] },
+    classifications: [{ segment: { name: 'Sports' }, genre: { name: 'Football' } }],
+    sales: { public: { startDateTime: FUT }, presales: [] } }];
+  check('49ers vs equipo chico en EU → NO alerta', run(nflUs, sd, NOW).length === 0);
+  // NBA en México → alerta; liga mexicana (sin NBA/marquee) → no.
+  sd = {};
+  const nba = [{ id: 'nbamx', name: 'NBA Mexico City Game: Pistons vs Mavericks', url: 'u',
+    dates: { start: { localDate: '2026-11-01' } },
+    _embedded: { venues: [{ name: 'Arena CDMX', city: { name: 'CDMX' }, country: { countryCode: 'MX' } }], attractions: [{ name: 'NBA' }] },
+    classifications: [{ segment: { name: 'Sports' }, genre: { name: 'Basketball' } }],
+    sales: { public: { startDateTime: FUT }, presales: [] } }];
+  check('NBA en México → alerta', run(nba, {}, NOW).length === 1);
+  const lnbp = [{ id: 'lnbp', name: 'Fuerza Regia vs Astros de Jalisco', url: 'u',
+    dates: { start: { localDate: '2026-11-01' } },
+    _embedded: { venues: [{ name: 'Gimnasio X', city: { name: 'x' }, country: { countryCode: 'MX' } }], attractions: [{ name: 'Fuerza Regia' }] },
+    classifications: [{ segment: { name: 'Sports' }, genre: { name: 'Basketball' } }],
+    sales: { public: { startDateTime: FUT }, presales: [] } }];
+  check('liga mexicana (LNBP) → NO se cuela', run(lnbp, {}, NOW).length === 0);
+
+  console.log('\n23) Anti-ruido: gira de 6 ciudades con misma venta → 1 aviso, no 6');
+  sd = {};
+  const gira = Array.from({ length: 6 }, (_, i) => ({
+    id: `fr-${i}`, name: 'Fuerza Regida', url: 'u',
+    dates: { start: { localDate: `2026-10-0${i + 1}` } },
+    _embedded: { venues: [{ name: `Anfiteatro ${i}`, city: { name: `Ciudad ${i}` }, country: { countryCode: 'US' } }], attractions: [{ name: 'Fuerza Regida' }] },
+    classifications: [{ segment: { name: 'Music' }, genre: { name: 'Latin' } }],
+    sales: { public: { startDateTime: FUT }, presales: [] } }));
+  out = run(gira, sd, NOW);
+  check('6 fechas misma venta → 1 sola alerta', out.length === 1);
+  check('el texto dice "6 fechas"', /6 fechas/.test(out[0]?.json.text ?? ''));
+
+  console.log('\n24) Basura → no revienta');
   out = run([{ id: 'x' }, {}, null], {}, NOW);
   check('sobrevive', Array.isArray(out));
 
